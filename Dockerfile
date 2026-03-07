@@ -24,7 +24,7 @@ RUN apk add --no-cache \
 # Note: grpc-cpp is intentionally kept as a runtime dependency
 # -----------------------------------------------------------------------------
 RUN apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
-    GRPC_VERSION=$(apk info -v grpc-cpp | sed 's/grpc-cpp-//' | sed 's/-r.*//') && \
+    GRPC_VERSION=$(apk policy grpc-cpp 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
     [ -n "$GRPC_VERSION" ] || { echo "ERROR: Failed to determine gRPC version"; exit 1; } && \
     echo "Building gRPC PHP extension for version ${GRPC_VERSION}" && \
     git clone --depth 1 -b v${GRPC_VERSION} https://github.com/grpc/grpc /tmp/grpc && \
