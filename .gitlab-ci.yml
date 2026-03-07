@@ -1,86 +1,224 @@
 stages:
   - build
+  - merge
   - test
 
 variables:
-  DOCKER_TLS_CERTDIR: "/certs"
-  IMAGE_NAME: ${CI_REGISTRY_IMAGE}
+  IMAGE: ${CI_REGISTRY_IMAGE}
 
-# Build and push multi-arch Docker images
-build:
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# =============================================================================
+# Build template (shared config)
+# =============================================================================
+.build-template:
   stage: build
-  image: docker:latest
+  image: docker:27
   services:
-    - docker:dind
+    - docker:27-dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker buildx create --name multiarch --driver docker-container --use
+    - docker buildx inspect --bootstrap
+  script:
+    - |
+      PUSH_FLAG=""
+      CACHE_TO=""
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        PUSH_FLAG="--push"
+        CACHE_TO="--cache-to type=registry,ref=${IMAGE}:cache-${PHP_VERSION}-${VARIANT}-${ARCH},mode=max"
+      fi
+
+      docker buildx build \
+        ${PUSH_FLAG} \
+        --platform "linux/${ARCH}" \
+        --target "${VARIANT}" \
+        --build-arg "PHP_VERSION=${PHP_VERSION}" \
+        --cache-from "type=registry,ref=${IMAGE}:cache-${PHP_VERSION}-${VARIANT}-${ARCH}" \
+        --cache-from "type=registry,ref=${IMAGE}:cache-${PHP_VERSION}-base-${ARCH}" \
+        ${CACHE_TO} \
+        --provenance=false \
+        --tag "${IMAGE}:${PHP_VERSION}-${VARIANT}-${ARCH}" \
+        .
+
+# =============================================================================
+# amd64 builds
+# =============================================================================
+build-amd64:
+  extends: .build-template
+  tags:
+    - saas-linux-medium-amd64
+  variables:
+    ARCH: amd64
   parallel:
     matrix:
-      - PHP_VERSION: ["8.2", "8.3", "8.4", "8.5"]
+      - PHP_VERSION: ["8.2", "8.3", "8.4"]
         VARIANT: ["base", "dev"]
+
+build-amd64-experimental:
+  extends: .build-template
+  tags:
+    - saas-linux-medium-amd64
+  allow_failure: true
+  variables:
+    ARCH: amd64
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.5"]
+        VARIANT: ["base", "dev"]
+
+# =============================================================================
+# arm64 builds
+# =============================================================================
+build-arm64:
+  extends: .build-template
+  tags:
+    - saas-linux-medium-arm64
+  variables:
+    ARCH: arm64
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.2", "8.3", "8.4"]
+        VARIANT: ["base", "dev"]
+
+build-arm64-experimental:
+  extends: .build-template
+  tags:
+    - saas-linux-medium-arm64
+  allow_failure: true
+  variables:
+    ARCH: arm64
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.5"]
+        VARIANT: ["base", "dev"]
+
+# =============================================================================
+# Merge template
+# =============================================================================
+.merge-template:
+  stage: merge
+  image: docker:27
+  services:
+    - docker:27-dind
+  tags:
+    - saas-linux-medium-amd64
   rules:
-    - if: '$PHP_VERSION == "8.5"'
-      allow_failure: true
-    - allow_failure: false
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker buildx create --name multiarch --driver docker-container --use
+    - docker buildx inspect --bootstrap
   script:
     - |
       # Generate tags
-      TAGS=""
+      TAGS="--tag ${IMAGE}:${PHP_VERSION}"
       if [ "$VARIANT" = "base" ]; then
-        TAGS="--tag ${IMAGE_NAME}:${PHP_VERSION}"
-        if [ "$PHP_VERSION" = "8.4" ]; then
-          TAGS="${TAGS} --tag ${IMAGE_NAME}:stable"
-        fi
-        if [ "$PHP_VERSION" = "8.5" ]; then
-          TAGS="${TAGS} --tag ${IMAGE_NAME}:latest"
-        fi
+        [ "$PHP_VERSION" = "8.4" ] && TAGS="$TAGS --tag ${IMAGE}:stable"
+        [ "$PHP_VERSION" = "8.5" ] && TAGS="$TAGS --tag ${IMAGE}:latest"
       else
-        TAGS="--tag ${IMAGE_NAME}:${PHP_VERSION}-dev"
-        if [ "$PHP_VERSION" = "8.4" ]; then
-          TAGS="${TAGS} --tag ${IMAGE_NAME}:stable-dev"
-        fi
-        if [ "$PHP_VERSION" = "8.5" ]; then
-          TAGS="${TAGS} --tag ${IMAGE_NAME}:latest-dev"
-        fi
+        TAGS="--tag ${IMAGE}:${PHP_VERSION}-dev"
+        [ "$PHP_VERSION" = "8.4" ] && TAGS="$TAGS --tag ${IMAGE}:stable-dev"
+        [ "$PHP_VERSION" = "8.5" ] && TAGS="$TAGS --tag ${IMAGE}:latest-dev"
       fi
 
-      # Set up QEMU for multi-arch builds
-      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+      # Create multi-arch manifest
+      docker buildx imagetools create \
+        $TAGS \
+        "${IMAGE}:${PHP_VERSION}-${VARIANT}-amd64" \
+        "${IMAGE}:${PHP_VERSION}-${VARIANT}-arm64"
 
-      # Create buildx builder
-      docker buildx create --use --name multi-arch-builder
-
-      # Log in to GitLab Container Registry
-      echo "${CI_REGISTRY_PASSWORD}" | docker login -u "${CI_REGISTRY_USER}" --password-stdin "${CI_REGISTRY}"
-
-      # Build and push (only push on main branch)
-      BUILD_ARGS="--platform linux/amd64,linux/arm64 --target ${VARIANT} --build-arg PHP_VERSION=${PHP_VERSION} ${TAGS}"
-      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        docker buildx build ${BUILD_ARGS} --push .
+      # Verify
+      if [ "$VARIANT" = "base" ]; then
+        docker buildx imagetools inspect "${IMAGE}:${PHP_VERSION}"
       else
-        docker buildx build ${BUILD_ARGS} .
+        docker buildx imagetools inspect "${IMAGE}:${PHP_VERSION}-dev"
       fi
 
-# Smoke test extensions
-test:
-  stage: test
-  image: docker:latest
-  services:
-    - docker:dind
+# =============================================================================
+# Merge jobs
+# =============================================================================
+merge:
+  extends: .merge-template
+  needs:
+    - build-amd64
+    - build-arm64
   parallel:
     matrix:
-      - PHP_VERSION: ["8.2", "8.3", "8.4", "8.5"]
+      - PHP_VERSION: ["8.2", "8.3", "8.4"]
+        VARIANT: ["base", "dev"]
+
+merge-experimental:
+  extends: .merge-template
+  allow_failure: true
+  needs:
+    - job: build-amd64-experimental
+      optional: true
+    - job: build-arm64-experimental
+      optional: true
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.5"]
+        VARIANT: ["base", "dev"]
+
+# =============================================================================
+# Smoke tests
+# =============================================================================
+.test-template:
+  stage: test
+  image: docker:27
+  services:
+    - docker:27-dind
+  tags:
+    - saas-linux-medium-amd64
   rules:
-    - if: '$PHP_VERSION == "8.5"'
-      allow_failure: true
-    - allow_failure: false
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+
+test:
+  extends: .test-template
+  needs:
+    - merge
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.2", "8.3", "8.4"]
   script:
-    - docker build --target base --build-arg PHP_VERSION=${PHP_VERSION} -t test-image .
-    - docker run --rm test-image php -m | grep -q bcmath
-    - docker run --rm test-image php -m | grep -q grpc
-    - docker run --rm test-image php -m | grep -q opentelemetry
-    - docker run --rm test-image php -m | grep -q pcntl
-    - docker run --rm test-image php -m | grep -q pdo_mysql
-    - docker run --rm test-image php -m | grep -q protobuf
-    - docker run --rm test-image php -m | grep -q redis
-    - docker run --rm test-image php -m | grep -q gd
-    - docker run --rm test-image php -m | grep -q "Zend OPcache"
+    - docker pull "${IMAGE}:${PHP_VERSION}"
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q bcmath
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q grpc
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q opentelemetry
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pcntl
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pdo_mysql
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q protobuf
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q redis
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q gd
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q "Zend OPcache"
+    - echo "All extensions verified for PHP ${PHP_VERSION}!"
+
+test-experimental:
+  extends: .test-template
+  allow_failure: true
+  needs:
+    - job: merge-experimental
+      optional: true
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.5"]
+  script:
+    - docker pull "${IMAGE}:${PHP_VERSION}"
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q bcmath
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q grpc
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q opentelemetry
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pcntl
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pdo_mysql
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q protobuf
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q redis
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q gd
+    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q "Zend OPcache"
     - echo "All extensions verified for PHP ${PHP_VERSION}!"

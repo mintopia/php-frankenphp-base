@@ -4,6 +4,7 @@ version: "3.0"
 principles:
   - "Thin orchestrator, thick workers"
   - "Only orchestrator spawns subagents"
+  - "All planning documents in '.planning' directory as markdown with Frontmatter
 ---
 
 # Global Architecture Rules

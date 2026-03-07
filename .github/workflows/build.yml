@@ -13,8 +13,95 @@ permissions:
   contents: read
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/mintopia/frankenphp-base
+
 jobs:
+  # ===========================================================================
+  # Build per-architecture images (parallel across all combinations)
+  # ===========================================================================
   build:
+    runs-on: ${{ matrix.arch == 'amd64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4", "8.5"]
+        variant: ["base", "dev"]
+        arch: ["amd64", "arm64"]
+    continue-on-error: ${{ matrix.php == '8.5' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          platforms: linux/${{ matrix.arch }}
+          target: ${{ matrix.variant }}
+          build-args: |
+            PHP_VERSION=${{ matrix.php }}
+          tags: |
+            ${{ env.IMAGE }}:${{ matrix.php }}-${{ matrix.variant }}-${{ matrix.arch }}
+          cache-from: |
+            type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.php }}-${{ matrix.variant }}-${{ matrix.arch }}
+            type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.php }}-base-${{ matrix.arch }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:cache-{1}-{2}-{3},mode=max', env.IMAGE, matrix.php, matrix.variant, matrix.arch) || '' }}
+          provenance: false
+
+      - name: Smoke test (base)
+        if: matrix.variant == 'base'
+        run: |
+          IMAGE="${{ env.IMAGE }}:${{ matrix.php }}-${{ matrix.variant }}-${{ matrix.arch }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            IMAGE="test-image"
+            docker buildx build --load --target base --build-arg PHP_VERSION=${{ matrix.php }} -t "$IMAGE" .
+          fi
+          docker run --rm "$IMAGE" php -m | grep -q bcmath
+          docker run --rm "$IMAGE" php -m | grep -q grpc
+          docker run --rm "$IMAGE" php -m | grep -q opentelemetry
+          docker run --rm "$IMAGE" php -m | grep -q pcntl
+          docker run --rm "$IMAGE" php -m | grep -q redis
+          docker run --rm "$IMAGE" php -m | grep -q protobuf
+          docker run --rm "$IMAGE" php -m | grep -q pdo_mysql
+          docker run --rm "$IMAGE" php -m | grep -q gd
+          docker run --rm "$IMAGE" php -m | grep -q "Zend OPcache"
+          echo "All extensions verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+
+      - name: Smoke test (dev)
+        if: matrix.variant == 'dev'
+        run: |
+          IMAGE="${{ env.IMAGE }}:${{ matrix.php }}-${{ matrix.variant }}-${{ matrix.arch }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            IMAGE="test-image-dev"
+            docker buildx build --load --target dev --build-arg PHP_VERSION=${{ matrix.php }} -t "$IMAGE" .
+          fi
+          docker run --rm "$IMAGE" php -m | grep -q xdebug
+          docker run --rm "$IMAGE" composer --version
+          docker run --rm "$IMAGE" node --version
+          echo "Dev tools verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+
+  # ===========================================================================
+  # Merge arch-specific images into multi-arch manifests
+  # ===========================================================================
+  merge:
+    if: github.event_name != 'pull_request'
+    needs: [build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -24,84 +111,47 @@ jobs:
     continue-on-error: ${{ matrix.php == '8.5' }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate tags
+      - name: Generate tag list
         id: tags
         run: |
-          TAGS="ghcr.io/mintopia/frankenphp-base"
           PHP="${{ matrix.php }}"
           VARIANT="${{ matrix.variant }}"
 
-          TAG_LIST=""
+          TAG_ARGS=""
           if [ "$VARIANT" = "base" ]; then
-            TAG_LIST="${TAGS}:${PHP}"
-            if [ "$PHP" = "8.4" ]; then
-              TAG_LIST="${TAG_LIST},${TAGS}:stable"
-            fi
-            if [ "$PHP" = "8.5" ]; then
-              TAG_LIST="${TAG_LIST},${TAGS}:latest"
-            fi
+            TAG_ARGS="--tag ${{ env.IMAGE }}:${PHP}"
+            [ "$PHP" = "8.4" ] && TAG_ARGS="${TAG_ARGS} --tag ${{ env.IMAGE }}:stable"
+            [ "$PHP" = "8.5" ] && TAG_ARGS="${TAG_ARGS} --tag ${{ env.IMAGE }}:latest"
           else
-            TAG_LIST="${TAGS}:${PHP}-dev"
-            if [ "$PHP" = "8.4" ]; then
-              TAG_LIST="${TAG_LIST},${TAGS}:stable-dev"
-            fi
-            if [ "$PHP" = "8.5" ]; then
-              TAG_LIST="${TAG_LIST},${TAGS}:latest-dev"
-            fi
+            TAG_ARGS="--tag ${{ env.IMAGE }}:${PHP}-dev"
+            [ "$PHP" = "8.4" ] && TAG_ARGS="${TAG_ARGS} --tag ${{ env.IMAGE }}:stable-dev"
+            [ "$PHP" = "8.5" ] && TAG_ARGS="${TAG_ARGS} --tag ${{ env.IMAGE }}:latest-dev"
           fi
 
-          echo "tags=${TAG_LIST}" >> $GITHUB_OUTPUT
+          echo "tag_args=${TAG_ARGS}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name == 'push' }}
-          platforms: linux/amd64,linux/arm64
-          target: ${{ matrix.variant }}
-          build-args: |
-            PHP_VERSION=${{ matrix.php }}
-          tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke test (base)
-        if: matrix.variant == 'base'
+      - name: Create multi-arch manifest
         run: |
-          docker buildx build --load --target base --build-arg PHP_VERSION=${{ matrix.php }} -t test-image .
-          docker run --rm test-image php -m | grep -q bcmath
-          docker run --rm test-image php -m | grep -q grpc
-          docker run --rm test-image php -m | grep -q opentelemetry
-          docker run --rm test-image php -m | grep -q pcntl
-          docker run --rm test-image php -m | grep -q redis
-          docker run --rm test-image php -m | grep -q protobuf
-          docker run --rm test-image php -m | grep -q pdo_mysql
-          docker run --rm test-image php -m | grep -q gd
-          docker run --rm test-image php -m | grep -q "Zend OPcache"
-          echo "All extensions verified for PHP ${{ matrix.php }}!"
+          docker buildx imagetools create \
+            ${{ steps.tags.outputs.tag_args }} \
+            ${{ env.IMAGE }}:${{ matrix.php }}-${{ matrix.variant }}-amd64 \
+            ${{ env.IMAGE }}:${{ matrix.php }}-${{ matrix.variant }}-arm64
 
-      - name: Smoke test (dev)
-        if: matrix.variant == 'dev'
+      - name: Verify manifest
         run: |
-          docker buildx build --load --target dev --build-arg PHP_VERSION=${{ matrix.php }} -t test-image-dev .
-          docker run --rm test-image-dev php -m | grep -q xdebug
-          docker run --rm test-image-dev composer --version
-          docker run --rm test-image-dev node --version
-          echo "Dev tools verified for PHP ${{ matrix.php }}!"
+          if [ "${{ matrix.variant }}" = "base" ]; then
+            TAG="${{ env.IMAGE }}:${{ matrix.php }}"
+          else
+            TAG="${{ env.IMAGE }}:${{ matrix.php }}-dev"
+          fi
+          docker buildx imagetools inspect "$TAG"
