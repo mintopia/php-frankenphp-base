@@ -78,7 +78,7 @@ build-amd64-experimental:
 build-arm64:
   extends: .build-template
   tags:
-    - saas-linux-medium-arm64
+    - arm
   variables:
     ARCH: arm64
   parallel:
@@ -89,7 +89,7 @@ build-arm64:
 build-arm64-experimental:
   extends: .build-template
   tags:
-    - saas-linux-medium-arm64
+    - arm
   allow_failure: true
   variables:
     ARCH: arm64

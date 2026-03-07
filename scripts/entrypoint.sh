@@ -11,11 +11,17 @@ set -e
 # This is useful for matching host filesystem permissions in development.
 
 if [ -n "${PGID}" ]; then
+    case "${PGID}" in
+        *[!0-9]*) echo "entrypoint: ERROR: PGID must be numeric, got '${PGID}'" >&2; exit 1 ;;
+    esac
     echo "entrypoint: Setting www-data group ID to ${PGID}"
     groupmod -o -g "${PGID}" www-data
 fi
 
 if [ -n "${PUID}" ]; then
+    case "${PUID}" in
+        *[!0-9]*) echo "entrypoint: ERROR: PUID must be numeric, got '${PUID}'" >&2; exit 1 ;;
+    esac
     echo "entrypoint: Setting www-data user ID to ${PUID}"
     usermod -o -u "${PUID}" www-data
 fi

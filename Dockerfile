@@ -7,7 +7,7 @@ ARG PHP_VERSION=8.4
 # =============================================================================
 # Stage 1: Production Base Image
 # =============================================================================
-FROM dunglas/frankenphp:latest-php${PHP_VERSION}-alpine AS base
+FROM dunglas/frankenphp:1-php${PHP_VERSION}-alpine AS base
 
 LABEL org.opencontainers.image.authors="jess@mintopia.net"
 LABEL org.opencontainers.image.source="https://github.com/mintopia/frankenphp-base"
@@ -21,9 +21,12 @@ RUN apk add --no-cache \
 
 # -----------------------------------------------------------------------------
 # gRPC extension — source compile against Alpine system packages
+# Note: grpc-cpp is intentionally kept as a runtime dependency
 # -----------------------------------------------------------------------------
 RUN apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
-    GRPC_VERSION=$(apk info grpc -d | grep grpc | cut -d- -f2) && \
+    GRPC_VERSION=$(apk info -v grpc-cpp | sed 's/grpc-cpp-//' | sed 's/-r.*//') && \
+    [ -n "$GRPC_VERSION" ] || { echo "ERROR: Failed to determine gRPC version"; exit 1; } && \
+    echo "Building gRPC PHP extension for version ${GRPC_VERSION}" && \
     git clone --depth 1 -b v${GRPC_VERSION} https://github.com/grpc/grpc /tmp/grpc && \
     cd /tmp/grpc/src/php/ext/grpc && \
     phpize && \
@@ -94,6 +97,8 @@ ENV SERVER_NAME=:80 \
     PHP_SERIALIZE_PRECISION=-1 \
     PHP_ZEND_ASSERTIONS=-1
 
+EXPOSE 80 443 2019
+
 # -----------------------------------------------------------------------------
 # Entrypoint, command, and healthcheck
 # -----------------------------------------------------------------------------
@@ -101,7 +106,7 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:80/ || exit 1
+    CMD curl -fsS http://localhost:2019/config/ > /dev/null || exit 1
 
 # =============================================================================
 # Stage 2: Development Image
@@ -121,13 +126,13 @@ RUN apk add --no-cache \
     mtr bind-tools iputils traceroute \
     mariadb-client \
     redis \
-    ccze \
+    lnav \
     nodejs npm
 
 # -----------------------------------------------------------------------------
 # Composer
 # -----------------------------------------------------------------------------
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # -----------------------------------------------------------------------------
 # Xdebug

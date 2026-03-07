@@ -94,7 +94,7 @@ docker run -e FRANKENPHP_CONFIG="worker /app/public/index.php" ...
 Dev images (`-dev` tags) include everything in the production image plus:
 
 - **Composer** (latest)
-- **Node.js** (LTS 22.x) with npm
+- **Node.js** (Alpine default) with npm
 - **PIE** (PHP Installer for Extensions)
 - **xdebug** (configured for `host.docker.internal`, auto-start)
 - **FrankenPHP watch mode** (auto-reload on file changes)
@@ -103,7 +103,7 @@ Dev images (`-dev` tags) include everything in the production image plus:
 - **Debugging:** strace, lsof, procps, htop
 - **Network:** curl, wget, mtr, dig, ping, traceroute, netcat
 - **Database CLI:** mariadb-client, redis-cli
-- **Utilities:** zip/unzip, ccze
+- **Utilities:** zip/unzip, lnav
 
 ## Quick Start
 
