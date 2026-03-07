@@ -1,0 +1,42 @@
+# Default Caddyfile for FrankenPHP Docker image
+#
+# This Caddyfile follows the conventions of the official FrankenPHP Docker image.
+# Configuration is driven by environment variables using Caddy's native
+# {$ENV_VAR:default} placeholder syntax.
+#
+# Environment Variables:
+#   SERVER_NAME             - Server address (default: :80)
+#   CADDY_GLOBAL_OPTIONS    - Additional global Caddy directives (default: empty)
+#   FRANKENPHP_CONFIG       - Additional FrankenPHP directives, e.g. worker config (default: empty)
+#   CADDY_SERVER_EXTRA_DIRECTIVES  - Extra top-level directives outside the site block (default: empty)
+#   APP_PUBLIC_DIR          - Document root directory (default: /app/public)
+#   CADDY_ENCODE            - Compression encodings (default: zstd gzip; set empty to disable)
+#   CADDY_SERVER_TRUSTED_PROXIES   - Trusted proxy configuration (default: empty)
+#   CADDY_EXTRA_DIRECTIVES  - Extra directives inside the site block (default: empty)
+#
+# Worker Mode:
+#   To enable FrankenPHP worker mode, set FRANKENPHP_CONFIG, for example:
+#     FRANKENPHP_CONFIG="worker /app/public/index.php"
+#
+
+# Global options block
+{
+	{$CADDY_GLOBAL_OPTIONS}
+
+	frankenphp {
+		{$FRANKENPHP_CONFIG}
+	}
+}
+
+{$CADDY_SERVER_EXTRA_DIRECTIVES}
+
+# Site block
+{$SERVER_NAME::80} {
+	root * {$APP_PUBLIC_DIR:/app/public}
+	encode {$CADDY_ENCODE:zstd gzip}
+
+	{$CADDY_SERVER_TRUSTED_PROXIES}
+	{$CADDY_EXTRA_DIRECTIVES}
+
+	php_server
+}

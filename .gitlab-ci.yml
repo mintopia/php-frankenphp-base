@@ -1,0 +1,86 @@
+stages:
+  - build
+  - test
+
+variables:
+  DOCKER_TLS_CERTDIR: "/certs"
+  IMAGE_NAME: ${CI_REGISTRY_IMAGE}
+
+# Build and push multi-arch Docker images
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.2", "8.3", "8.4", "8.5"]
+        VARIANT: ["base", "dev"]
+  rules:
+    - if: '$PHP_VERSION == "8.5"'
+      allow_failure: true
+    - allow_failure: false
+  script:
+    - |
+      # Generate tags
+      TAGS=""
+      if [ "$VARIANT" = "base" ]; then
+        TAGS="--tag ${IMAGE_NAME}:${PHP_VERSION}"
+        if [ "$PHP_VERSION" = "8.4" ]; then
+          TAGS="${TAGS} --tag ${IMAGE_NAME}:stable"
+        fi
+        if [ "$PHP_VERSION" = "8.5" ]; then
+          TAGS="${TAGS} --tag ${IMAGE_NAME}:latest"
+        fi
+      else
+        TAGS="--tag ${IMAGE_NAME}:${PHP_VERSION}-dev"
+        if [ "$PHP_VERSION" = "8.4" ]; then
+          TAGS="${TAGS} --tag ${IMAGE_NAME}:stable-dev"
+        fi
+        if [ "$PHP_VERSION" = "8.5" ]; then
+          TAGS="${TAGS} --tag ${IMAGE_NAME}:latest-dev"
+        fi
+      fi
+
+      # Set up QEMU for multi-arch builds
+      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+      # Create buildx builder
+      docker buildx create --use --name multi-arch-builder
+
+      # Log in to GitLab Container Registry
+      echo "${CI_REGISTRY_PASSWORD}" | docker login -u "${CI_REGISTRY_USER}" --password-stdin "${CI_REGISTRY}"
+
+      # Build and push (only push on main branch)
+      BUILD_ARGS="--platform linux/amd64,linux/arm64 --target ${VARIANT} --build-arg PHP_VERSION=${PHP_VERSION} ${TAGS}"
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        docker buildx build ${BUILD_ARGS} --push .
+      else
+        docker buildx build ${BUILD_ARGS} .
+      fi
+
+# Smoke test extensions
+test:
+  stage: test
+  image: docker:latest
+  services:
+    - docker:dind
+  parallel:
+    matrix:
+      - PHP_VERSION: ["8.2", "8.3", "8.4", "8.5"]
+  rules:
+    - if: '$PHP_VERSION == "8.5"'
+      allow_failure: true
+    - allow_failure: false
+  script:
+    - docker build --target base --build-arg PHP_VERSION=${PHP_VERSION} -t test-image .
+    - docker run --rm test-image php -m | grep -q bcmath
+    - docker run --rm test-image php -m | grep -q grpc
+    - docker run --rm test-image php -m | grep -q opentelemetry
+    - docker run --rm test-image php -m | grep -q pcntl
+    - docker run --rm test-image php -m | grep -q pdo_mysql
+    - docker run --rm test-image php -m | grep -q protobuf
+    - docker run --rm test-image php -m | grep -q redis
+    - docker run --rm test-image php -m | grep -q gd
+    - docker run --rm test-image php -m | grep -q "Zend OPcache"
+    - echo "All extensions verified for PHP ${PHP_VERSION}!"
