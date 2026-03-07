@@ -205,7 +205,7 @@ test-experimental:
   script:
     - docker pull "${IMAGE}:${PHP_VERSION}"
     - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q bcmath
-    - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q grpc
+    # gRPC skipped — not yet compatible with PHP 8.5+
     - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q opentelemetry
     - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pcntl
     - docker run --rm "${IMAGE}:${PHP_VERSION}" php -m | grep -q pdo_mysql

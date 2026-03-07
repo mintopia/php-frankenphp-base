@@ -73,7 +73,10 @@ jobs:
             docker buildx build --load --target base --build-arg PHP_VERSION=${{ matrix.php }} -t "$IMAGE" .
           fi
           docker run --rm "$IMAGE" php -m | grep -q bcmath
-          docker run --rm "$IMAGE" php -m | grep -q grpc
+          # gRPC skipped for PHP 8.5+ (not yet compatible)
+          if [ "${{ matrix.php }}" != "8.5" ]; then
+            docker run --rm "$IMAGE" php -m | grep -q grpc
+          fi
           docker run --rm "$IMAGE" php -m | grep -q opentelemetry
           docker run --rm "$IMAGE" php -m | grep -q pcntl
           docker run --rm "$IMAGE" php -m | grep -q redis
