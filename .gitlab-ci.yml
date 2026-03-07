@@ -51,8 +51,6 @@ workflow:
 # =============================================================================
 build-amd64:
   extends: .build-template
-  tags:
-    - saas-linux-medium-amd64
   variables:
     ARCH: amd64
   parallel:
@@ -62,8 +60,6 @@ build-amd64:
 
 build-amd64-experimental:
   extends: .build-template
-  tags:
-    - saas-linux-medium-amd64
   allow_failure: true
   variables:
     ARCH: amd64
@@ -106,8 +102,6 @@ build-arm64-experimental:
   image: docker:27
   services:
     - docker:27-dind
-  tags:
-    - saas-linux-medium-amd64
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
@@ -174,8 +168,6 @@ merge-experimental:
   image: docker:27
   services:
     - docker:27-dind
-  tags:
-    - saas-linux-medium-amd64
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:

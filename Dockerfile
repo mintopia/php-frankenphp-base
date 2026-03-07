@@ -12,6 +12,8 @@ FROM dunglas/frankenphp:1-php${PHP_VERSION}-alpine AS base
 LABEL org.opencontainers.image.authors="jess@mintopia.net"
 LABEL org.opencontainers.image.source="https://github.com/mintopia/frankenphp-base"
 
+ARG PHP_VERSION
+
 # -----------------------------------------------------------------------------
 # System packages (production)
 # -----------------------------------------------------------------------------
@@ -22,20 +24,25 @@ RUN apk add --no-cache \
 # -----------------------------------------------------------------------------
 # gRPC extension — source compile against Alpine system packages
 # Note: grpc-cpp is intentionally kept as a runtime dependency
+# Skipped for PHP 8.5+ (not yet supported)
 # -----------------------------------------------------------------------------
-RUN apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
-    GRPC_VERSION=$(apk policy grpc-cpp 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
-    [ -n "$GRPC_VERSION" ] || { echo "ERROR: Failed to determine gRPC version"; exit 1; } && \
-    echo "Building gRPC PHP extension for version ${GRPC_VERSION}" && \
-    git clone --depth 1 -b v${GRPC_VERSION} https://github.com/grpc/grpc /tmp/grpc && \
-    cd /tmp/grpc/src/php/ext/grpc && \
-    phpize && \
-    ./configure && \
-    make && \
-    make install && \
-    rm -rf /tmp/grpc && \
-    apk del --no-cache git grpc-dev $PHPIZE_DEPS && \
-    echo "extension=grpc.so" > /usr/local/etc/php/conf.d/grpc.ini
+RUN if echo "${PHP_VERSION}" | grep -qE '^8\.[5-9]|^[9-9]'; then \
+        echo "INFO: Skipping gRPC extension for PHP ${PHP_VERSION} (not yet supported)"; \
+    else \
+        apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
+        GRPC_VERSION=$(apk policy grpc-cpp 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
+        [ -n "$GRPC_VERSION" ] || { echo "ERROR: Failed to determine gRPC version"; exit 1; } && \
+        echo "Building gRPC PHP extension for version ${GRPC_VERSION}" && \
+        git clone --depth 1 -b v${GRPC_VERSION} https://github.com/grpc/grpc /tmp/grpc && \
+        cd /tmp/grpc/src/php/ext/grpc && \
+        phpize && \
+        ./configure && \
+        make && \
+        make install && \
+        rm -rf /tmp/grpc && \
+        apk del --no-cache git grpc-dev $PHPIZE_DEPS && \
+        echo "extension=grpc.so" > /usr/local/etc/php/conf.d/grpc.ini; \
+    fi
 
 # -----------------------------------------------------------------------------
 # PHP extensions via install-php-extensions
@@ -159,8 +166,7 @@ ENV PHP_DISPLAY_ERRORS=On \
     PHP_SESSION_COOKIE_SECURE=0 \
     PHP_REALPATH_CACHE_TTL=120 \
     PHP_EXPOSE_PHP=On \
-    PHP_ZEND_ASSERTIONS=1 \
-    FRANKENPHP_CONFIG=watch
+    PHP_ZEND_ASSERTIONS=1
 
 # -----------------------------------------------------------------------------
 # Default shell for dev
