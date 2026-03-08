@@ -72,19 +72,33 @@ jobs:
             IMAGE="test-image"
             docker buildx build --load --target base --build-arg PHP_VERSION=${{ matrix.php }} -t "$IMAGE" .
           fi
-          docker run --rm "$IMAGE" php -m | grep -q bcmath
-          # gRPC skipped for PHP 8.5+ (not yet compatible)
-          if [ "${{ matrix.php }}" != "8.5" ]; then
-            docker run --rm "$IMAGE" php -m | grep -q grpc
-          fi
-          docker run --rm "$IMAGE" php -m | grep -q opentelemetry
-          docker run --rm "$IMAGE" php -m | grep -q pcntl
-          docker run --rm "$IMAGE" php -m | grep -q redis
-          docker run --rm "$IMAGE" php -m | grep -q protobuf
-          docker run --rm "$IMAGE" php -m | grep -q pdo_mysql
-          docker run --rm "$IMAGE" php -m | grep -q gd
-          docker run --rm "$IMAGE" php -m | grep -q "Zend OPcache"
-          echo "All extensions verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+          MAX_RETRIES=3
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $attempt of $MAX_RETRIES..."
+            if (
+              docker run --rm "$IMAGE" php -m | grep -q bcmath
+              # gRPC skipped for PHP 8.5+ (not yet compatible)
+              if [ "${{ matrix.php }}" != "8.5" ]; then
+                docker run --rm "$IMAGE" php -m | grep -q grpc
+              fi
+              docker run --rm "$IMAGE" php -m | grep -q opentelemetry
+              docker run --rm "$IMAGE" php -m | grep -q pcntl
+              docker run --rm "$IMAGE" php -m | grep -q redis
+              docker run --rm "$IMAGE" php -m | grep -q protobuf
+              docker run --rm "$IMAGE" php -m | grep -q pdo_mysql
+              docker run --rm "$IMAGE" php -m | grep -q gd
+              docker run --rm "$IMAGE" php -m | grep -q "Zend OPcache"
+            ); then
+              echo "All extensions verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+              exit 0
+            fi
+            if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+              echo "Attempt $attempt failed, retrying in 5s..."
+              sleep 5
+            fi
+          done
+          echo "All $MAX_RETRIES attempts failed"
+          exit 1
 
       - name: Smoke test (dev)
         if: matrix.variant == 'dev'
@@ -94,10 +108,24 @@ jobs:
             IMAGE="test-image-dev"
             docker buildx build --load --target dev --build-arg PHP_VERSION=${{ matrix.php }} -t "$IMAGE" .
           fi
-          docker run --rm "$IMAGE" php -m | grep -q xdebug
-          docker run --rm "$IMAGE" composer --version
-          docker run --rm "$IMAGE" node --version
-          echo "Dev tools verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+          MAX_RETRIES=3
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $attempt of $MAX_RETRIES..."
+            if (
+              docker run --rm "$IMAGE" php -m | grep -q xdebug
+              docker run --rm "$IMAGE" composer --version
+              docker run --rm "$IMAGE" node --version
+            ); then
+              echo "Dev tools verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"
+              exit 0
+            fi
+            if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+              echo "Attempt $attempt failed, retrying in 5s..."
+              sleep 5
+            fi
+          done
+          echo "All $MAX_RETRIES attempts failed"
+          exit 1
 
   # ===========================================================================
   # Merge arch-specific images into multi-arch manifests

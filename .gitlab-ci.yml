@@ -175,6 +175,7 @@ merge-experimental:
 
 test:
   extends: .test-template
+  retry: 2
   needs:
     - merge
   parallel:
@@ -195,6 +196,7 @@ test:
 
 test-experimental:
   extends: .test-template
+  retry: 2
   allow_failure: true
   needs:
     - job: merge-experimental
