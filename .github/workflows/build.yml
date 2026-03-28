@@ -77,16 +77,17 @@ jobs:
             echo "Attempt $attempt of $MAX_RETRIES..."
             if (
               docker run --rm "$IMAGE" php -m | grep -q bcmath
+              docker run --rm "$IMAGE" php -m | grep -q gd
               # gRPC skipped for PHP 8.5+ (not yet compatible)
               if [ "${{ matrix.php }}" != "8.5" ]; then
                 docker run --rm "$IMAGE" php -m | grep -q grpc
               fi
+              docker run --rm "$IMAGE" php -m | grep -q intl
               docker run --rm "$IMAGE" php -m | grep -q opentelemetry
               docker run --rm "$IMAGE" php -m | grep -q pcntl
-              docker run --rm "$IMAGE" php -m | grep -q redis
-              docker run --rm "$IMAGE" php -m | grep -q protobuf
               docker run --rm "$IMAGE" php -m | grep -q pdo_mysql
-              docker run --rm "$IMAGE" php -m | grep -q gd
+              docker run --rm "$IMAGE" php -m | grep -q protobuf
+              docker run --rm "$IMAGE" php -m | grep -q redis
               docker run --rm "$IMAGE" php -m | grep -q "Zend OPcache"
             ); then
               echo "All extensions verified for PHP ${{ matrix.php }} (${{ matrix.arch }})!"

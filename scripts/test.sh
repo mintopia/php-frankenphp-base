@@ -19,7 +19,7 @@ SUPPORTED_VERSIONS=(8.2 8.3 8.4 8.5)
 VARIANTS=(base dev)
 
 # Extensions expected in every image (base + dev)
-BASE_EXTENSIONS=(bcmath grpc opentelemetry pcntl pdo pdo_mysql protobuf redis gd opcache)
+BASE_EXTENSIONS=(bcmath gd grpc intl opcache opentelemetry pcntl pdo pdo_mysql protobuf redis)
 # Additional extensions for the dev variant
 DEV_EXTENSIONS=(xdebug)
 

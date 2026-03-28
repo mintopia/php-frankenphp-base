@@ -7,7 +7,7 @@ ARG PHP_VERSION=8.4
 # =============================================================================
 # Stage 1: Production Base Image
 # =============================================================================
-FROM dunglas/frankenphp:1-php${PHP_VERSION}-alpine AS base
+FROM dunglas/frankenphp:1-php${PHP_VERSION}-bookworm AS base
 
 LABEL org.opencontainers.image.authors="jess@mintopia.net"
 LABEL org.opencontainers.image.source="https://github.com/mintopia/frankenphp-base"
@@ -17,30 +17,40 @@ ARG PHP_VERSION
 # -----------------------------------------------------------------------------
 # System packages (production)
 # -----------------------------------------------------------------------------
-RUN apk add --no-cache \
-    shadow \
-    curl
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash \
+        curl && \
+    rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# gRPC extension — source compile against Alpine system packages
-# Note: grpc-cpp is intentionally kept as a runtime dependency
+# gRPC extension — source compile against Debian system packages
+# Note: libgrpc29/libgrpc++1.51 are kept as runtime dependencies
 # Skipped for PHP 8.5+ (not yet supported)
 # -----------------------------------------------------------------------------
 RUN if echo "${PHP_VERSION}" | grep -qE '^8\.[5-9]|^[9-9]'; then \
         echo "INFO: Skipping gRPC extension for PHP ${PHP_VERSION} (not yet supported)"; \
     else \
-        apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
-        GRPC_VERSION=$(apk policy grpc-cpp 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
+        apt-get update && \
+        apt-get install -y --no-install-recommends \
+            git \
+            autoconf \
+            g++ \
+            make \
+            libgrpc-dev \
+            libgrpc++-dev \
+            zlib1g-dev && \
+        GRPC_VERSION=$(dpkg-query -W -f='${Version}' libgrpc-dev 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+') && \
         [ -n "$GRPC_VERSION" ] || { echo "ERROR: Failed to determine gRPC version"; exit 1; } && \
         echo "Building gRPC PHP extension for version ${GRPC_VERSION}" && \
         git clone --depth 1 -b v${GRPC_VERSION} https://github.com/grpc/grpc /tmp/grpc && \
         cd /tmp/grpc/src/php/ext/grpc && \
         phpize && \
         ./configure && \
-        make && \
+        make -j"$(nproc)" && \
         make install && \
+        strip --strip-debug "$(php-config --extension-dir)/grpc.so" && \
         rm -rf /tmp/grpc && \
-        apk del --no-cache git grpc-dev $PHPIZE_DEPS && \
         echo "extension=grpc.so" > /usr/local/etc/php/conf.d/grpc.ini; \
     fi
 
@@ -49,14 +59,24 @@ RUN if echo "${PHP_VERSION}" | grep -qE '^8\.[5-9]|^[9-9]'; then \
 # -----------------------------------------------------------------------------
 RUN install-php-extensions \
     bcmath \
+    gd \
+    intl \
+    opcache \
+    opentelemetry \
     pcntl \
     pdo \
     pdo_mysql \
-    redis \
     protobuf \
-    opentelemetry \
-    gd \
-    opcache
+    redis
+
+# -----------------------------------------------------------------------------
+# Clean up gRPC build dependencies
+# -----------------------------------------------------------------------------
+RUN apt-get purge -y libgrpc-dev libgrpc++-dev 2>/dev/null || true && \
+    apt-get autoremove -y && \
+    apt-get install -y --no-install-recommends libgrpc29 libgrpc++1.51 2>/dev/null || true && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
 # Configuration files
@@ -123,18 +143,20 @@ FROM base AS dev
 # -----------------------------------------------------------------------------
 # System packages (dev tools)
 # -----------------------------------------------------------------------------
-RUN apk add --no-cache \
-    bash jq yq tree less \
-    git openssh-client \
-    zip unzip \
-    nano vim \
-    strace lsof procps htop \
-    wget netcat-openbsd \
-    mtr bind-tools iputils traceroute \
-    mariadb-client \
-    redis \
-    lnav \
-    nodejs npm
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        jq yq tree less \
+        git openssh-client \
+        zip unzip \
+        nano vim \
+        strace lsof procps htop \
+        wget netcat-openbsd \
+        mtr-tiny dnsutils inetutils-traceroute iputils-ping \
+        default-mysql-client \
+        redis-tools \
+        lnav \
+        nodejs npm && \
+    rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
 # Composer
