@@ -22,4 +22,5 @@ RUN apk add --no-cache git grpc-cpp grpc-dev $PHPIZE_DEPS && \
         protobuf \
         opentelemetry \
         gd && \
-    echo 'memory_limit = 256M' > /usr/local/etc/php/conf.d/memory_limit.ini \
+    echo 'memory_limit = 256M' > /usr/local/etc/php/conf.d/memory_limit.ini && \
+    echo 'session.upload_progress.enabled = 0' > /usr/local/etc/php/conf.d/session_progress.ini \
